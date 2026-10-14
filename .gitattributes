@@ -1,0 +1,19 @@
+# 行尾约定：仓库内一律 LF，避免 Windows 上 autocrlf 把补丁改坏
+* text=auto eol=lf
+
+# 补丁必须是 LF —— CRLF 会让 git apply 报 "corrupt patch"
+*.patch text eol=lf
+*.diff  text eol=lf
+
+# 二进制/大文件（本仓库不提交，仅防御）
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
+*.mp4  binary
+*.skp  binary
+*.dwg  binary
+
+# 让 GitHub 正确识别语言统计
+*.py   text eol=lf
+*.md   text eol=lf
