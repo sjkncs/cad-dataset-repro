@@ -1,0 +1,156 @@
+# VideoCAD 数据加载优化补丁
+
+针对 [`ghadinehme/VideoCAD`](https://github.com/ghadinehme/VideoCAD) 的
+`data_loader` 链路优化。**仅含补丁，不含上游源码。**
+
+- 补丁文件：`videocad_dataloader_optimizations.patch`（6.7 KB，6 个补丁块）
+- 改动文件：`data_loader/sequence_retriver.py`、`data_loader/data_loader.py`、`main.py`
+- 改动量：+54 / −18
+
+---
+
+## 一、应用
+
+```bash
+git clone https://github.com/ghadinehme/VideoCAD.git
+cd VideoCAD
+
+git apply --check /path/to/videocad_dataloader_optimizations.patch   # 先检查
+git apply         /path/to/videocad_dataloader_optimizations.patch   # 再应用
+```
+
+**基线**：补丁基于 VideoCAD `main` 分支生成（2026-10 拉取）。
+若上游已变动导致 `git apply` 失败，用 `tools/make_patch.py` 重新生成
+（它会逐条校验锚点，锚点不存在即中止，不会误改）。
+
+---
+
+## 二、优化项
+
+### 2.1 帧处理向量化（主要收益）⭐
+
+**问题**：`data_loader.py` 里有一个向量化快路径**从未被调用**。
+
+```
+data_loader.py:368  def resize_frames(self, frames)        ← 向量化快路径（死代码）
+data_loader.py:379  def resize_frames_slow(self, frames)   ← 逐帧 PIL
+data_loader.py:449  frames_tensor = self.resize_frames_slow(frames)
+```
+
+**实测**（480×640 → 224×224，`tools/bench_resize.py` 可复现）：
+
+| 序列长度 | slow（现用） | cv2 向量化 + resize | 纯向量化（预 resize 后） |
+|---|---:|---:|---:|
+| N=10 | 83.1 ms | 44.9 ms（**1.85×**） | 23.7 ms（**3.51×**） |
+| N=20 | 154.9 ms | 110.4 ms（**1.40×**） | 54.1 ms（**2.86×**） |
+
+**为什么不能简单替换**：`resize_frames()` **不做 resize**，直接替换会改变语义
+（帧若是 480×640 会被原样送进网络）。这很可能正是原作者没接上的原因。
+
+**补丁做法**：
+
+- 新增 `resize_frames_fast()`：帧尺寸 ≠ `image_size` 时先 resize，尺寸匹配时**完全跳过**
+- `resize_frames_slow()` 默认委托给 `resize_frames_fast()`
+- 保留 `VIDEO_CAD_FORCE_SLOW=1` 环境变量回退旧实现，便于 A/B 对照
+- 输出 `np.ascontiguousarray`，避免下游额外拷贝
+
+**拿满 3× 的前提**：在 `generate_dataset.py` 预处理阶段把帧预 resize 到
+`image_size` 后落盘。这样训练时零 resize 开销，走纯向量化路径。
+（本补丁未改 `generate_dataset.py`，因为它需要原始视频才能验证。）
+
+### 2.2 pickle 文件句柄泄漏
+
+```python
+# 原（sequence_retriver.py:29）
+data = pickle.load(open(self.data_files[idx], 'rb'))   # 句柄永不关闭
+```
+
+每个 `__getitem__` 泄漏一个文件句柄。训练跑几百轮后累积，
+Windows 上会触发 `Too many open files` / `PermissionError`。已改用 `with`。
+
+### 2.3 `num_workers` 默认值
+
+`main.py:175` / `test.py:199` 原默认 `num_workers=2`。
+每个样本要读一个 pickle + 一张 PNG，属 I/O 密集，2 个 worker 会饿住 GPU。
+改为 `min(8, os.cpu_count())`。
+
+### 2.4 清洁度
+
+- 删除未使用的 `from functools import lru_cache`（`sequence_retriver.py:8`）
+- 删除 `data_loader.py:411` 重复计算的 `base_file_id`
+  （`sequence_retriever.get_sequence()` 已返回该值）
+
+---
+
+## 三、验证记录
+
+### 3.1 补丁可应用性
+
+```
+git apply --check  →  exit=0
+```
+
+### 3.2 语法
+
+```
+python -m py_compile data_loader/sequence_retriver.py data_loader/data_loader.py main.py
+→  exit=0
+```
+
+### 3.3 功能验证（`tools/verify_patch.py`，全部通过）
+
+| 检查项 | 结果 |
+|---|---|
+| 输入 480×640 → 输出形状 `[10,3,224,224]` | ✅ |
+| 数值落在 [0,1] | ✅ |
+| dtype = float32 | ✅ |
+| 内存连续（避免下游拷贝） | ✅ |
+| 预 resize 输入 → 形状正确 | ✅ |
+| 默认路径 == 快路径（补丁已生效） | ✅ 完全一致 |
+| `VIDEO_CAD_FORCE_SLOW=1` 可回退旧实现 | ✅ |
+| 句柄泄漏已修（`with` + `pickle.load(fh)`） | ✅ |
+| 未使用的 `lru_cache` import 已删 | ✅ |
+
+### 3.4 实测加速（同一脚本输出）
+
+```
+强制慢路径(PIL 逐帧)       70.31 ms
+默认路径(补丁后快路径)      28.43 ms   加速 2.47x
+预 resize 输入(零 resize)  16.82 ms   加速 4.18x
+```
+
+（此处数字略高于 §2.1 的基准表，因为基准表用的是固定 repeats 的独立测量；
+两者量级一致，都体现 2~4× 的收益。）
+
+### 3.5 验证后状态
+
+验证完成后对上游克隆执行 `git checkout -- .` **还原干净**，
+本补丁不会在工作副本留下未提交改动。
+
+---
+
+## 四、未包含在补丁里的更大优化（需改数据管线）
+
+1. **换 LMDB**：当前每样本读独立的 pickle + PNG，随机读放大严重。
+   上游 `generate_dataset.py:9` 已 `import lmdb` 却未接上——
+   这是设计好但没完成的加速路径。
+2. **帧存 JPEG 而非 PNG**：224×224 的帧存 PNG 体积远大于 JPEG，
+   I/O 是瓶颈时可显著降低读放大。
+3. **预 resize 后落盘**：见 §2.1，一次性代价换每轮收益。
+
+这三项都需要原始视频或重跑数据生成管线，故未纳入补丁。
+
+---
+
+## 五、一处待核实的疑点
+
+```python
+# generate_dataset.py:14-17
+fps = cap.get(cv2.CAP_PROP_FPS)
+frame_idx = int(timestamp)   # int(round(timestamp * fps))   ← 被注释掉的写法
+```
+
+把浮点秒直接截断为帧号，而注释掉的 `int(round(timestamp * fps))` 才是正确换算。
+**若视频 fps ≠ 1，帧定位会错位**——VideoCAD 采集为 60 FPS，故很可能存在偏差。
+
+未下载原始视频，无法实测确认。**如果你有原始数据，这是值得优先核实的一处。**

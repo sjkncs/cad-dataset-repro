@@ -1,0 +1,35 @@
+# 数据与产物：本仓库只提交工具/补丁/文档，不提交数据集
+data/
+meta/
+inputs/
+gold/
+renders/
+bench/data/
+bench/*.jsonl
+
+# 上游克隆（应用补丁时才需要）
+VideoCAD/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 大文件保护
+*.mp4
+*.skp
+*.dwg
+*.rvt
+*.sldprt
+*.sldasm
+*.catpart
+*.prt
