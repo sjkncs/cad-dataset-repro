@@ -93,15 +93,32 @@ cv2.resize 调用次数：
 若有人误用它生成数据，才会出现未 resize 的情况；此时补丁的
 `resize_frames_fast()` 也会自动 resize 兜底，不会静默出错。
 
-### 2.2 pickle 文件句柄泄漏
+### 2.2 `get_sequence` 依赖引用计数来关闭 pickle 文件
 
 ```python
 # 原（sequence_retriver.py:29）
-data = pickle.load(open(self.data_files[idx], 'rb'))   # 句柄永不关闭
+data = pickle.load(open(self.data_files[idx], 'rb'))
 ```
 
-每个 `__getitem__` 泄漏一个文件句柄。训练跑几百轮后累积，
-Windows 上会触发 `Too many open files` / `PermissionError`。已改用 `with`。
+> **本条更正了本文档早期版本的一个错误说法。**
+
+早期版本称这是「句柄泄漏，长训练会触发 `Too many open files`」。
+**实测表明在 CPython 上不是功能性 bug**，实测记录如下：
+
+| 探测 | 结果 |
+|---|---|
+| `-W always::ResourceWarning`，200 次调用 | **200 个 ResourceWarning**（文件确实交给了 GC） |
+| `gc.disable()`，20,000 次调用 | **未失败**（表达式结束引用计数归零） |
+| 阳性对照：真持有 2,000 个 `open()` 对象 | 本机也未触发上限 |
+
+即：**CPython 的引用计数会在表达式结束时立即回收关闭该临时文件**，
+因此这只是代码卫生问题，**不是会崩的 bug**。我无法让它真正失败。
+非引用计数实现（PyPy）下才可能累积，但未实测，不作断言。
+
+复现：`python tools/probe_leak_reality.py`
+
+补丁仍改为 `with`——它消除 ResourceWarning 并使意图明确；
+若上游认为这是噪音，该 hunk 可独立丢弃（与 §2.1 的性能修复无依赖）。
 
 ### 2.3 `num_workers` 默认值
 

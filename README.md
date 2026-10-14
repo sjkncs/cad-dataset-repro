@@ -75,7 +75,7 @@ cv2.resize 调用次数：
 
 | 问题 | 位置 | 影响 |
 |---|---|---|
-| `pickle.load(open(...))` 句柄永不关闭 | `sequence_retriver.py:29` | 每样本泄漏一个句柄，长训练触发 `Too many open files` |
+| `pickle.load(open(...))` 未关闭文件（依赖引用计数回收） | `sequence_retriver.py:29` | 200/200 次调用产生 ResourceWarning；CPython 上**不构成功能性 bug**，属代码卫生 |
 | `num_workers` 默认 2（I/O 密集却偏小） | `main.py:175` / `test.py:199` | 饿住 GPU |
 | 未使用的 `from functools import lru_cache` | `sequence_retriver.py:8` | 清洁度 |
 | `base_file_id` 重复计算 | `data_loader.py:411` | 清洁度 |
@@ -163,6 +163,9 @@ SKP 头部内嵌创建版本（UTF-16LE BOM `FF FE` 之后）：
 | `tools/make_patch.py` | 生成优化补丁（逐条锚点校验，锚点缺失即中止） |
 | `tools/verify_patch.py` | 补丁功能验证（形状/数值/dtype/快慢路径一致性） |
 | `tools/verify_preresize.py` | 实证帧是否已预 resize（monkeypatch 统计 `cv2.resize` 调用） |
+| `tools/probe_leak_reality.py` | 判定「未关闭 pickle 文件」在 CPython 上是否真泄漏（ResourceWarning / gc.disable 对照） |
+| `tools/repro_handle_leak.py` | 跨平台句柄增长测量 |
+| `tools/push_via_api.py` | git 推送不通时用 GitHub Git Data API 提交（含编码自检） |
 
 ### 快速开始
 

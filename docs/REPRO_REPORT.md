@@ -190,18 +190,48 @@ data_loader/data_loader.py:449  frames_tensor = self.resize_frames_slow(frames)
 
 **关键**：不能简单把 `slow` 换成 `fast` —— **`fast` 不做 resize**，
 直接换会破坏语义（这很可能正是原作者没接上的原因）。
-正确做法是让 `fast` 在帧尺寸不匹配时先 resize，尺寸匹配时完全跳过
-（配合在 `generate_dataset.py` 预处理阶段预 resize 到 `image_size`）。
+正确做法是让 `fast` 在帧尺寸不匹配时先 resize，尺寸匹配时完全跳过。
 
-### 6.2 VideoCAD：pickle 文件句柄泄漏
+> **更正**：本报告早期版本在此处还写了「配合在 `generate_dataset.py`
+> 预处理阶段预 resize 到 `image_size`」。**该步骤是多余的** ——
+> 上游入口 `generate_action_vectors_and_video_pairs(..., resize=(224, 224))`
+> 在抽帧时就已 resize 到 224×224 再落盘，产物尺寸本来就等于 `image_size`。
+> 实测（`tools/verify_preresize.py`，monkeypatch 统计 `cv2.resize` 调用）：
+>
+> | 输入尺寸 | `cv2.resize` 调用次数 | 耗时 |
+> |---|---:|---:|
+> | 224×224（上游真实产物） | **0** | 16.90 ms |
+> | 480×640（合成） | 10 | 32.02 ms（1.89x） |
+> | 1080×1920（合成） | — | 96.84 ms（5.73x） |
+>
+> 即：走正常生成流程的数据，打完补丁**已直接进入零 resize 快路径**。
+> 同文件 `convert_vid_to_frames()`（不 resize 的那个）经核对是**未调用的死代码**。
+
+### 6.2 VideoCAD：pickle 文件未显式关闭（**不是**功能性 bug）
 
 ```python
 # sequence_retriver.py:29（原）
-data = pickle.load(open(self.data_files[idx], 'rb'))   # 句柄永不关闭
+data = pickle.load(open(self.data_files[idx], 'rb'))   # 未显式 close
 ```
 
-每个 `__getitem__` 泄漏一个句柄。训练跑几百轮后累积，
-Windows 上会触发 `Too many open files` / `PermissionError`。改用 `with`。
+> **本节更正了本报告早期版本的说法。**
+
+早期版本称「每样本泄漏一个句柄，长训练会触发 `Too many open files`」。
+**实测表明这在 CPython 上不成立**：
+
+| 探测 | 结果 |
+|---|---|
+| `-W always::ResourceWarning`，200 次调用 | **200 个 ResourceWarning**（文件确实未显式关闭） |
+| `gc.disable()`，20,000 次调用 | **未失败**（表达式结束引用计数归零即回收） |
+| 阳性对照：真持有 2,000 个 `open()` 对象 | 本机也未触发上限 |
+
+即：CPython 的引用计数会在表达式结束时回收该临时文件，
+**这只是代码卫生问题，不是会崩的 bug**。非引用计数实现（PyPy）下才可能累积，
+但未实测，不作断言。
+
+复现：`python tools/probe_leak_reality.py`
+
+补丁仍改为 `with`（消除 ResourceWarning、意图明确），但该 hunk 可独立丢弃。
 
 ### 6.3 VideoCAD：`num_workers` 默认值偏小
 
