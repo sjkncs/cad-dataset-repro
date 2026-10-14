@@ -10,6 +10,12 @@ bench/*.jsonl
 # 上游克隆（应用补丁时才需要）
 VideoCAD/
 
+# 本地工作流临时文件（提交信息、一次性校验脚本等）
+_msg.txt
+_verify.py
+_regen.patch
+_*.py
+
 # Python
 __pycache__/
 *.py[cod]
