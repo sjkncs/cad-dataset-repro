@@ -54,9 +54,44 @@ data_loader.py:449  frames_tensor = self.resize_frames_slow(frames)
 - 保留 `VIDEO_CAD_FORCE_SLOW=1` 环境变量回退旧实现，便于 A/B 对照
 - 输出 `np.ascontiguousarray`，避免下游额外拷贝
 
-**拿满 3× 的前提**：在 `generate_dataset.py` 预处理阶段把帧预 resize 到
-`image_size` 后落盘。这样训练时零 resize 开销，走纯向量化路径。
-（本补丁未改 `generate_dataset.py`，因为它需要原始视频才能验证。）
+### 2.1.1 更正：无需修改 `generate_dataset.py`
+
+> **本条更正了本文档早期版本的一个错误说法。**
+
+早期版本称「要拿满 3× 必须在 `generate_dataset.py` 预 resize」。
+**这是错的。** 实测与代码核对后确认：上游**已经这样做了**。
+
+上游 `generate_dataset.py:206-209` 的入口是：
+
+```python
+generate_action_vectors_and_video_pairs("data/data_raw", "data/data_resized",
+                                        resize=(224, 224))
+```
+
+该函数内部 `extract_frames_from_actions(vid_path, timesteps, resize)` 会
+**在抽帧时就 resize 到 224×224** 再落盘。所以 `data_resized/*_data.pkl` 里的
+帧本来就是 `image_size`，与 `DatasetBase(image_size=(224,224))` 一致。
+
+**实证**（`tools/verify_preresize.py`，用 monkeypatch 统计 `cv2.resize` 调用次数）：
+
+```
+序列长度 N=10
+  A 上游真实产物形状 224x224    16.90 ms   1.00x
+  B 未预 resize 形状 480x640    32.02 ms   1.89x
+  C 高清截图形状 1080x1920      96.84 ms   5.73x
+
+cv2.resize 调用次数：
+  224x224 输入 -> 0 次   ✅ 完全跳过 resize
+  480x640 输入 -> 10 次
+```
+
+**结论**：走上游正常生成流程得到的数据，应用本补丁后即**直接进入零 resize 的
+纯向量化路径**，无需任何额外改动。
+
+**另注**：同文件的 `convert_vid_to_frames()`（不 resize 的那个）经核对是
+**未被调用的死代码**——`__main__` 走的是 `generate_action_vectors_and_video_pairs`。
+若有人误用它生成数据，才会出现未 resize 的情况；此时补丁的
+`resize_frames_fast()` 也会自动 resize 兜底，不会静默出错。
 
 ### 2.2 pickle 文件句柄泄漏
 

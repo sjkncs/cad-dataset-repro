@@ -41,14 +41,35 @@ data_loader.py:449  frames_tensor = self.resize_frames_slow(frames)
 ### 为什么原作者没接上（关键洞察）
 
 **不能简单把 `slow` 替换成 `fast`** —— `fast` **不做 resize**，
-直接替换会改变语义。正确修法是：
+直接替换会改变语义。正确修法是让 `resize_frames_fast()` 在帧尺寸 ≠ `image_size`
+时先 resize，尺寸匹配时完全跳过。补丁保留了 resize 语义，并提供
+`VIDEO_CAD_FORCE_SLOW=1` 环境变量回退旧行为，便于 A/B 对照。
 
-1. `resize_frames_fast()` 在帧尺寸 ≠ `image_size` 时先 resize，尺寸匹配时完全跳过
-2. 配合在 `generate_dataset.py` 预处理阶段把帧**预 resize 到 `image_size`** 后落盘
-3. 这样每轮训练都能走零 resize 的纯向量化路径，拿到完整 3× 收益
+### 实测：补丁后是否已进入零 resize 快路径
 
-补丁保留了 resize 语义，并提供 `VIDEO_CAD_FORCE_SLOW=1` 环境变量回退旧行为，
-便于 A/B 对照。
+```
+序列长度 N=10
+  A 上游真实产物形状 224x224    16.90 ms   1.00x
+  B 未预 resize 形状 480x640    32.02 ms   1.89x
+  C 高清截图形状 1080x1920      96.84 ms   5.73x
+
+cv2.resize 调用次数：
+  224x224 输入 -> 0 次   ✅ 完全跳过 resize
+  480x640 输入 -> 10 次
+```
+
+上游 `generate_dataset.py` 的入口是
+`generate_action_vectors_and_video_pairs(..., resize=(224, 224))`，
+**抽帧时就已 resize 到 224×224 再落盘**。因此走上游正常生成流程的数据，
+应用本补丁后**直接进入零 resize 的纯向量化路径，无需任何额外改动**。
+
+> 📌 **本条更正了早期版本的一个错误说法**。早期 README 称「必须先在
+> `generate_dataset.py` 预 resize 才能拿满收益」——实测证明上游已经这样做了，
+> 该步骤是多余的。复现命令：`python tools/verify_preresize.py --videocad <VideoCAD>`
+
+**另注**：同文件的 `convert_vid_to_frames()`（不 resize 的那个）是**未被调用的
+死代码**；若有人误用它生成数据，补丁的 `resize_frames_fast()` 会自动 resize 兜底，
+不会静默出错。
 
 ### 顺带修掉的问题
 
@@ -140,7 +161,8 @@ SKP 头部内嵌创建版本（UTF-16LE BOM `FF FE` 之后）：
 | `tools/rubric_probe.py` | rubrics 可机器判定性分析 |
 | `tools/bench_resize.py` | 帧处理路径基准测试（复现上表数字） |
 | `tools/make_patch.py` | 生成优化补丁（逐条锚点校验，锚点缺失即中止） |
-| `tools/verify_patch.py` | 补丁功能验证 |
+| `tools/verify_patch.py` | 补丁功能验证（形状/数值/dtype/快慢路径一致性） |
+| `tools/verify_preresize.py` | 实证帧是否已预 resize（monkeypatch 统计 `cv2.resize` 调用） |
 
 ### 快速开始
 
@@ -159,8 +181,11 @@ python tools/fetch_bench.py
 python tools/bench_resize.py
 
 # 生成 / 验证补丁
-python tools/make_patch.py            # 需先用 --src 指向 VideoCAD 克隆
+python tools/make_patch.py            # 需用 --src 指向 VideoCAD 克隆
 python tools/verify_patch.py          # 需先应用补丁
+
+# 实证帧是否已预 resize（决定能否走零 resize 快路径）
+python tools/verify_preresize.py --videocad /path/to/VideoCAD
 ```
 
 ---
