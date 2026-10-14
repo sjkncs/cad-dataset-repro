@@ -150,41 +150,67 @@ python tools/verify_bench_manifest.py  # 对 manifest 做逐字节校验
 
 DWG 的版本签名是前 6 字节 ASCII（`AC1032` = AutoCAD 2018），与上游 README 声明一致。
 
-### 6.1 本层**做不到**的（不要据此声称评测完备）
+### 6.1 本层的定位
 
-| 项 | 为什么做不到 | 需要什么 |
+本层**只回答一个问题：拿到的数据本身可信吗？**
+答案是可信（4/4 逐字节一致）。
+
+它**不回答**「模型画得对」。
+
+而「画得对不对」所需的几何探针**已经打通**（见第七节）——
+DWG→DXF 通路已解决，不再需要 ODA 注册下载。
+
+---
+
+## 七、第 1 层几何探针（DWG→DXF 通路已打通）
+
+瓶颈曾是 DWG 封闭格式。**已解决**：用 LibreDWG 的 `dwg2dxf` 转 DXF，
+再交给 `ezdxf` 抽几何事实。LibreDWG 是 **GPL 开源、免注册、官方提供 Windows
+预编译包**，比需要注册的 ODA File Converter 更适合自动化。
+
+```bash
+python tools/fetch_libredwg.py         # 拉取 dwg2dxf（~11.5 MB，带 sha256 校验）
+python tools/probe_dwg_geometry.py --dwg bench/sample/task-001__GOLD__gold.dwg
+```
+
+### 7.1 对 gold 的实测（task-001）
+
+| 探针 | 结果 | 与参考图对照 |
 |---|---|---|
-| DWG 内部几何（实体计数、图层、尺寸标注） | DWG 是封闭二进制格式 | AutoCAD / ODA File Converter / 先转 DXF 再用 `ezdxf` |
-| 2D 标注完整性 | 同上 | 同上 |
-| 3D 实体性（"genuine 3D geometry"） | 同上 | 同上 |
-| `Layout1` 图纸完整性 | 同上 | 同上 |
-| 语义需求（是否符合任务描述） | 需理解图纸语义 | LLM / 视觉裁判 |
+| 单位 | `$INSUNITS = 4`（毫米） | 与上游声明 `units: mm` 一致 ✅ |
+| 图层 | `0 / Defpoints / dim / new` | 有专用 `dim` 标注层 ✅ |
+| 模型空间实体 | 25 | — |
+| 实体类型 | `DIMENSION 12` / `LINE 6` / **`CIRCLE 4`** / `LWPOLYLINE 2` / `ARC 1` | 图上 **4 个孔** ✅ |
+| 图层分布 | `dim 12` / `0 7` / `new 6` | 标注全在 `dim` 层 ✅ |
+| 包围盒 | `24.5669 × 17.0744` | — |
+| 尺寸测量值 | `1.0, 1.0, 2.0, 2.0, 2.8, 3.0, 3.5, 3.5, 5.6, 6.0, 8.0, 12.0` | **逐个对上图纸标注** ✅ |
+| 多重性前缀 | `2x<>`（5.6 / 2.8 / 2.0）、`4x<>`（1.0） | 对应 `2×Ø5.6`、`2×Ø2.8`、`2×R2`、`4×R1` ✅ |
 
-**结论**：本层只能证明"数据没坏"，**不能**证明"模型画得对"。
-后者需要 DWG→DXF 通路（或装 ODA）后接 `ezdxf` 做几何探针。
+**参考图上的标注全部命中、无一遗漏**：`R12`、`2×Ø5.6`、`2×Ø2.8`、`4×R1`、`2×R2`，
+以及线性尺寸 `3 / 3.5 / 6 / 8 / 2`。
 
----
+这使第 1 层从「格式校验」升级为**真正的几何校验**：
+`probe_dwg_geometry.py` 的输出就是「正确答案的几何指纹」；
+被测系统产出同格式文件后跑同一探针，逐项对比即可。
 
-## 七、第 1 层可提取的几何探针（需先解决 DWG 读取）
+### 7.2 依赖说明
 
+`dwg2dxf` 是 GPL 三方件，**不提交进仓库**（`.gitignore` 已排除 `tools/libredwg/`）。
+用 `tools/fetch_libredwg.py` 按需下载，脚本内置 sha256 留档校验：
 
-若被测系统产出 SKP（SketchUp），以下探针均验证可取：
+```
+libredwg-0.14-win64.zip
+sha256 = 1ad7e15344d20b3426c3435b078d82fb84b35062815946b2cca9c5fc9810fea8
+```
 
-| 探针 | 取法 |
+### 7.3 仍未覆盖的
+
+| 项 | 说明 |
 |---|---|
-| 递归实体统计 | 遍历 `entities`，按 `typename` / 嵌套深度 / 名称 / 材料 / 标签聚合 |
-| 真实尺寸 | `model.bounds` + `model.options['UnitsOptions']['LengthUnit']` 换算 |
-| 单位制 | `LengthUnit`：0 = 英寸，1 = 英尺，2 = 毫米，3 = 厘米，4 = 米 |
-| 命名构件检索 | 按名称匹配（如 `window` 出现次数） |
-| 多视角渲染 | `view.write_image()` 离屏渲染，不依赖窗口前台 |
-
-参考实现见本仓库历史提交中的 `tools/inspect_gold.py` 与 `tools/render_views.py` 思路
-（依赖 SketchUp Ruby 桥，非纯 Python）。
-
-**产物为 DWG 时**：探针需改用 AutoCAD 侧（COM / `ezdxf` 读 DXF 中间格式），
-或先转 DXF 再用 `ezdxf` 做纯离线探针（推荐，可进 CI，无需装 CAD）。
-
----
+| 3D 实体性（"genuine 3D geometry"） | 检查 `3DSOLID`/`REGION`/`MESH` 等类型；探针已按类型计数，可直接扩展 |
+| `Layout1` 图纸完整性 | 需读 paper space 布局；当前只探了 model space |
+| 独立 TEXT/MTEXT | task-001 的文本在 `DIMENSION.text` 字段（如 `2x<>`）而非独立实体；探针两者都收 |
+| 语义需求（是否符合任务描述） | 需 LLM / 视觉裁判，属第 2 层 |
 
 ## 八、建议的落地顺序
 

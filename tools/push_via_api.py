@@ -92,6 +92,7 @@ def main() -> int:
 
     # 2) blob
     tree_items = []
+    pending_deletes: list[str] = []
     for spec in args.file:
         if "=" not in spec:
             sys.exit(f"--file 需要 '仓库路径=本地路径' 形式，收到: {spec}")
@@ -107,11 +108,17 @@ def main() -> int:
                            "type": "blob", "sha": blob["sha"]})
 
     for repo_path in args.delete:
-        print(f"  delete {repo_path}")
-        tree_items.append({"path": repo_path, "mode": "100644",
-                           "type": "blob", "sha": None})
+        # ⚠️ 不要用 tree item 的 sha=None 来删文件：
+        #    GitHub 的 git/trees 接口对 sha:null 会返回
+        #    `422 GitRPC::BadObjectState`（实测，带不带 base_tree 都一样）。
+        #    正确做法：先记下待删清单，创建 tree 时**不含**这些路径，
+        #    提交后用 Contents API（DELETE contents/<path>）真正删除。
+        print(f"  标记删除 {repo_path}")
+        pending_deletes.append(repo_path)
 
-    # 3) tree
+    # 3) tree —— 只包含新增/修改项；base_tree 保住其余文件。
+    #    注意：tree 里不出现待删路径 ≠ 删除，文件会因为 base_tree 而保留，
+    #    所以删除必须走第 6 步的 Contents API。
     tree = gh("POST", f"/repos/{args.repo}/git/trees",
               {"base_tree": base_tree, "tree": tree_items})
     print(f"  新 tree: {tree['sha'][:7]}")
@@ -140,6 +147,21 @@ def main() -> int:
     gh("PATCH", f"/repos/{args.repo}/git/refs/heads/{args.branch}",
        {"sha": sha, "force": bool(args.force)})
     print(f"\n✅ 已更新 {args.branch} -> {sha[:7]}")
+
+    # 7) 真正删除文件（Contents API）—— tree item 的 sha=None 会被 GitHub 拒掉
+    for repo_path in pending_deletes:
+        try:
+            cur = gh("GET", f"/repos/{args.repo}/contents/{repo_path}"
+                            f"?ref={args.branch}")
+            gh("DELETE", f"/repos/{args.repo}/contents/{repo_path}", {
+                "message": f"chore: remove {repo_path}",
+                "sha": cur["sha"],
+                "branch": args.branch,
+            })
+            print(f"  🗑  已删除 {repo_path}（产生一个额外提交，属正常）")
+        except Exception as e:  # noqa: BLE001
+            print(f"  ⚠️ 删除 {repo_path} 失败: {str(e)[:200]}")
+
     return 0
 
 

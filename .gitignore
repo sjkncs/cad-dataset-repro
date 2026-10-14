@@ -12,6 +12,9 @@ bench/*
 # 上游克隆（应用补丁时才需要）
 VideoCAD/
 
+# LibreDWG 预编译包（~11.5 MB、GPL 三方件）——用 tools/fetch_libredwg.py 按需下载
+tools/libredwg/
+
 # 本地工作流临时文件（提交信息、一次性校验脚本等）
 _msg.txt
 _verify.py

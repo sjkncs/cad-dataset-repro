@@ -159,6 +159,8 @@ SKP 头部内嵌创建版本（UTF-16LE BOM `FF FE` 之后）：
 | `tools/fetch_bench.py` | 拉 autocad-bench 评测定义（tasks.jsonl 等，纯文本） |
 | `tools/fetch_bench_sample.py` | 拉样例任务的 `reference.png` + `gold.dwg`（按角色命名，便于阳性对照） |
 | `tools/verify_bench_manifest.py` | 第 1 层确定性校验：产物对 manifest 逐字节校验 + 格式层事实（离线） |
+| `tools/fetch_libredwg.py` | 拉取 LibreDWG 预编译包（`dwg2dxf`，含 sha256 留档校验） |
+| `tools/probe_dwg_geometry.py` | **几何探针**：DWG→DXF→ezdxf，抽图层/实体计数/包围盒/尺寸标注 |
 | `tools/analyze_meta.py` | 任务/领域/时长/rubrics 汇总统计 |
 | `tools/rubric_probe.py` | rubrics 可机器判定性分析 |
 | `tools/bench_resize.py` | 帧处理路径基准测试（复现上表数字） |
