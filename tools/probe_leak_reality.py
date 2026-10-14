@@ -55,14 +55,18 @@ def main():
         # ---- 测试 2：gc 关闭时是否累积
         print("\n[2] gc.disable() 后反复调用（模拟延迟回收环境）")
         gc.disable()
+        gc_fail = None
         try:
-            err = None
             try:
                 for i in range(1, 20001):
                     pickle.load(open(p, "rb"))
             except OSError as e:
-                err = (i, e)
-            print(f"    20000 次: {'❌ 第 %d 次失败 %s: %s' % (err[0], type(err[1]).__name__, err[1]) if err else '✅ 全部成功'}")
+                gc_fail = (i, e)
+            if gc_fail:
+                print(f"    20000 次: ❌ 第 {gc_fail[0]} 次失败 "
+                      f"{type(gc_fail[1]).__name__}: {gc_fail[1]}")
+            else:
+                print("    20000 次: ✅ 全部成功（引用计数在表达式结束时即回收）")
         finally:
             gc.enable()
 
@@ -83,13 +87,19 @@ def main():
         print("\n" + "=" * 74)
         print("结论")
         print("=" * 74)
-        if not res:
-            print("  CPython 引用计数会在表达式结束时立即关闭临时文件，")
-            print("  因此 `pickle.load(open(...))` 在 CPython 上**通常不构成句柄泄漏**。")
-            print("  → 不应把它作为 bug 报给上游；最多作为代码风格建议（with 更明确），")
-            print("    或在用非 CPython 实现（PyPy）时才是真问题。")
+        # 判定必须结合「是否真的累积到失败」，不能只看 ResourceWarning。
+        # ResourceWarning 只说明"未显式关闭"，不等于"泄漏"——
+        # CPython 的引用计数会在表达式结束时回收它。
+        if gc_fail:
+            print("  ❌ 即使 gc 关闭也累积到失败 → 这是**功能性 bug**，值得报上游。")
+        elif res:
+            print("  ⚠️ 检测到未显式关闭（ResourceWarning），但在 CPython 上")
+            print("     引用计数会在表达式结束时立即回收，gc.disable() 下 20000 次也未失败。")
+            print("  → **不是功能性 bug**，属代码卫生问题（with 更明确、消除告警）。")
+            print("     不应作为 bug 报给上游；非引用计数实现（PyPy）下才可能累积，")
+            print("     但本脚本未验证该情形，不作断言。")
         else:
-            print("  检测到未关闭文件，构成泄漏，值得报上游。")
+            print("  ✅ 未检测到未关闭文件，无问题。")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
