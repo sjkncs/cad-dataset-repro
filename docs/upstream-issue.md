@@ -23,9 +23,11 @@
 ````markdown
 Hi, thanks for releasing VideoCAD — the dataset and the VideoCADFormer baseline.
 
-While reading `data_loader/` I found two issues on the input path. Both are
-reproducible on a clean clone of `main` (`2d69eea`), and I have a patch ready
-(see bottom). Opening an issue first since there is no CONTRIBUTING file.
+While reading `data_loader/` I found one performance issue on the input path
+(a vectorized fast path that is never called), plus a couple of minor hygiene
+items and one thing I could not verify. All measured on a clean clone of `main`
+(`2d69eea`); patch is ready. Opening an issue first since there is no
+CONTRIBUTING file.
 
 ## 1. There is a vectorized fast path that is never called
 

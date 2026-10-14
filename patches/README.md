@@ -1,11 +1,15 @@
 # VideoCAD 数据加载优化补丁
 
+> **已向上游提交**：[ghadinehme/VideoCAD#13](https://github.com/ghadinehme/VideoCAD/issues/13)
+> — `dataloader: enable the unused vectorized fast path (2.7-5x on frame processing)`
+
 针对 [`ghadinehme/VideoCAD`](https://github.com/ghadinehme/VideoCAD) 的
 `data_loader` 链路优化。**仅含补丁，不含上游源码。**
 
 - 补丁文件：`videocad_dataloader_optimizations.patch`（6.7 KB，6 个补丁块）
 - 改动文件：`data_loader/sequence_retriver.py`、`data_loader/data_loader.py`、`main.py`
 - 改动量：+54 / −18
+- 基线：上游 `main` @ `2d69eea`（2026-09-21）
 
 ---
 
