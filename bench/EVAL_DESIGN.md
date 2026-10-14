@@ -126,7 +126,47 @@ split, task_id, task_name, time_limit_s, units
 
 ---
 
-## 六、第 1 层可提取的几何探针（已在 SketchUp 上实测可行）
+## 六、第 1 层已实现的部分（离线、不依赖 CAD）
+
+`tools/verify_bench_manifest.py` + `tools/fetch_bench_sample.py` 已落地第 1 层的
+**前提**：验证拿到的数据本身可信。
+
+```bash
+python tools/fetch_bench.py            # 只拉评测定义（tasks.jsonl 等）
+python tools/fetch_bench_sample.py     # 拉 2 个任务的 reference.png + gold.dwg
+python tools/verify_bench_manifest.py  # 对 manifest 做逐字节校验
+```
+
+**实测结果**（task-001 / task-002）：
+
+| 产物 | 字节数 | sha256 对 manifest | 其他 |
+|---|---|---|---|
+| `task-001/gold.dwg` | 28,775 | ✅ `d64c1511…` | 版本签名 `AC1032`，熵 6.904 bit/B |
+| `task-001/reference.png` | 66,044 | ✅ `1c4a406f…` | 827×612，非白占比 0.0552，平均亮度 247.4 |
+| `task-002/gold.dwg` | 132,073 | ✅ `f7021e28…` | 版本签名 `AC1032`，熵 7.678 bit/B |
+| `task-002/reference.png` | 44,270 | ✅ `664ed5e3…` | 487×713，非白占比 0.0897，平均亮度 241.4 |
+
+**4/4 逐字节一致 → 阳性对照的前提成立**：上游 gold 在本校验器下完全可信。
+
+DWG 的版本签名是前 6 字节 ASCII（`AC1032` = AutoCAD 2018），与上游 README 声明一致。
+
+### 6.1 本层**做不到**的（不要据此声称评测完备）
+
+| 项 | 为什么做不到 | 需要什么 |
+|---|---|---|
+| DWG 内部几何（实体计数、图层、尺寸标注） | DWG 是封闭二进制格式 | AutoCAD / ODA File Converter / 先转 DXF 再用 `ezdxf` |
+| 2D 标注完整性 | 同上 | 同上 |
+| 3D 实体性（"genuine 3D geometry"） | 同上 | 同上 |
+| `Layout1` 图纸完整性 | 同上 | 同上 |
+| 语义需求（是否符合任务描述） | 需理解图纸语义 | LLM / 视觉裁判 |
+
+**结论**：本层只能证明"数据没坏"，**不能**证明"模型画得对"。
+后者需要 DWG→DXF 通路（或装 ODA）后接 `ezdxf` 做几何探针。
+
+---
+
+## 七、第 1 层可提取的几何探针（需先解决 DWG 读取）
+
 
 若被测系统产出 SKP（SketchUp），以下探针均验证可取：
 
@@ -146,7 +186,7 @@ split, task_id, task_name, time_limit_s, units
 
 ---
 
-## 七、建议的落地顺序
+## 八、建议的落地顺序
 
 1. **先做第 3 层**：拿 `gold.dwg` 跑通校验与渲染，确认评测管线本身正确
 2. **再做第 1 层**：确定性探针 + 预算核对

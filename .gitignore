@@ -4,8 +4,10 @@ meta/
 inputs/
 gold/
 renders/
-bench/data/
-bench/*.jsonl
+# bench/ 下只有「本仓库自己的文档」入库（EVAL_DESIGN.md）；
+# 其余全部是按需下载的上游内容或本地产物，一律不提交。
+bench/*
+!bench/EVAL_DESIGN.md
 
 # 上游克隆（应用补丁时才需要）
 VideoCAD/
