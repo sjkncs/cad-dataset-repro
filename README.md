@@ -161,6 +161,9 @@ SKP 头部内嵌创建版本（UTF-16LE BOM `FF FE` 之后）：
 | `tools/verify_bench_manifest.py` | 第 1 层确定性校验：产物对 manifest 逐字节校验 + 格式层事实（离线） |
 | `tools/fetch_libredwg.py` | 拉取 LibreDWG 预编译包（`dwg2dxf`，含 sha256 留档校验） |
 | `tools/probe_dwg_geometry.py` | **几何探针**：DWG→DXF→ezdxf，抽图层/实体计数/包围盒/尺寸标注 |
+| `tools/probe_layout_and_3d.py` | 探查 paper space 布局与 3D 实体构成（用于推导判定规则） |
+| `tools/check_bench_submission.py` | **合规判定**：按 2d/3d 口径判定提交物（含逐条依据，已双向验证） |
+| `tools/check_tools.py` | 提交前自检：tools/ 下所有脚本语法正确 |
 | `tools/analyze_meta.py` | 任务/领域/时长/rubrics 汇总统计 |
 | `tools/rubric_probe.py` | rubrics 可机器判定性分析 |
 | `tools/bench_resize.py` | 帧处理路径基准测试（复现上表数字） |
